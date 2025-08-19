@@ -35,7 +35,6 @@ jobs:
           syft packages orion/app:${{ github.sha }} -o spdx-json > sbom/sbom.spdx.json
           syft packages orion/app:${{ github.sha }} -o cyclonedx-json > sbom/sbom.cdx.json
 
-      # ✅ Use official Trivy action instead of manual dpkg install
       - name: Trivy scan (vulns + licenses)
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -46,12 +45,11 @@ jobs:
           ignore-unfixed: true
           scanners: vuln,license
 
-     - name: Install Conftest (OPA)
+      - name: Install Conftest (OPA)
         run: |
           curl -L -o conftest.tar.gz https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz
           tar xzf conftest.tar.gz
           sudo mv conftest /usr/local/bin/
-
 
       - name: Enforce vulnerability policy (block CRITICAL)
         run: conftest test trivy.json -p ci/opa-policies
