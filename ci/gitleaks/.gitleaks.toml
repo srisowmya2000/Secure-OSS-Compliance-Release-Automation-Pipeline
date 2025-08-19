@@ -1,0 +1,4 @@
+title = "baseline"
+[allowlist]
+description = "Allow only test/dummy values (adjust as needed)"
+regexes = []

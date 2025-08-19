@@ -1,0 +1,9 @@
+rules:
+- id: py-dangerous-subprocess
+  message: "Avoid shell=True in subprocess calls"
+  severity: ERROR
+  languages: [python]
+  patterns:
+    - pattern: subprocess.Popen(..., shell=True, ...)
+  metadata:
+    cwe: "CWE-78"

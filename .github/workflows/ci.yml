@@ -1,0 +1,75 @@
+name: secure-pipeline
+on: [push, pull_request]
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gitleaks
+        uses: zricethezav/gitleaks-action@v2
+        with:
+          config-path: ci/gitleaks/.gitleaks.toml
+      - name: Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: ci/semgrep/semgrep.yml
+
+  build_scan:
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t orion/app:${{ github.sha }} ./app
+      - name: Install Syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: Generate SBOM (SPDX & CycloneDX)
+        run: |
+          mkdir -p sbom
+          syft packages orion/app:${{ github.sha }} -o spdx-json > sbom/sbom.spdx.json
+          syft packages orion/app:${{ github.sha }} -o cyclonedx-json > sbom/sbom.cdx.json
+      - name: Install Trivy
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y wget
+          wget -qO /tmp/trivy.deb https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.55.0_Linux-64bit.deb
+          sudo dpkg -i /tmp/trivy.deb
+      - name: Trivy scan (vulns + licenses)
+        run: trivy image --ignore-unfixed --format json --output trivy.json --scanners vuln,license orion/app:${{ github.sha }}
+      - name: Install conftest
+        run: |
+          curl -L https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_Linux_x86_64.tar.gz | tar xz
+          sudo mv conftest /usr/local/bin/
+      - name: Enforce vulnerability policy
+        run: conftest test trivy.json -p ci/opa-policies
+      - name: Enforce license policy
+        run: conftest test sbom/sbom.spdx.json -p ci/opa-policies
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-artifacts
+          path: |
+            sbom/sbom.spdx.json
+            sbom/sbom.cdx.json
+            trivy.json
+
+  dast:
+    runs-on: ubuntu-latest
+    needs: build_scan
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run container
+        run: |
+          docker run -d -p 8000:8000 --name app orion/app:${{ github.sha }}
+          sleep 3
+      - name: ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://localhost:8000'
+          cmd_options: '-r zap-report.html -m 5'
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: zap-report.html
