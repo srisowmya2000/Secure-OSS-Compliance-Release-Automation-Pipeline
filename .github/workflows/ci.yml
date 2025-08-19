@@ -72,10 +72,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run container (ephemeral)
+      # Each job runs on a fresh VM, so rebuild the image here
+      - name: Build Docker image (for DAST)
+        run: docker build -t orion/app:${{ github.sha }} ./app
+
+      - name: Run container (ephemeral) and wait for readiness
         run: |
           docker run -d -p 8000:8000 --name app orion/app:${{ github.sha }}
-          sleep 3
+          for i in {1..20}; do
+            if curl -sf http://localhost:8000/health > /dev/null; then
+              echo "App is ready"; break
+            fi
+            echo "Waiting for app... ($i)"
+            sleep 1
+          done
 
       - name: OWASP ZAP baseline
         uses: zaproxy/action-baseline@v0.10.0
