@@ -1,4 +1,4 @@
-# Secure-OSS-Compliance-Release-Automation-Pipeline
+# Secure Compliance Automation-Pipeline
 Summary: 
 Every time a developer pushes code or development tools, the pipeline acts as a security guard + health inspector for your app. This repository contains a sample secure CI/CD pipeline that shows how to “bake in” security and compliance checks automatically whenever code changes are pushed.In other words, when developers build an app, we automatically generate an SBOM (Software Bill of Materials). We then check each library’s license in MIT, Apache, GPL, etc.  If a risky license is found for closed-source products or tools, the pipeline fails the build process and opens for review. If everything looks good, the build continues and eventually continues the deployment. 
 
