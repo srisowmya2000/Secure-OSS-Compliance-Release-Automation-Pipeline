@@ -8,7 +8,7 @@ Every time a developer pushes code or development tools, the pipeline acts as a 
 
 Goals:
 Continuous SAST/SCA/DAST with policy gates.
-SBOM (SPDX + CycloneDX) generated on every build.
+SBOM (SPDX + CycloneDX) is generated on every build.
 License risk detection (GPL vs. MIT/Apache) and developer guidance.
 REST API + dashboard so teams can see risks per commit/release.
 
