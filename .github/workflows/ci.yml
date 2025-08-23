@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ./app
+        run: docker build -t $IMAGE_NAME:$IMAGE_TAG ./app
 
       - name: Install Syft
         run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
@@ -41,15 +41,14 @@ jobs:
       - name: Generate SBOMs (SPDX & CycloneDX)
         run: |
           mkdir -p sbom
-          syft packages ${IMAGE_NAME}:${IMAGE_TAG} -o spdx-json > sbom/sbom.spdx.json
-          syft packages ${IMAGE_NAME}:${IMAGE_TAG} -o cyclonedx-json > sbom/sbom.cdx.json
-          # convenience single-file alias if you want just "sbom.json"
+          syft packages $IMAGE_NAME:$IMAGE_TAG -o spdx-json > sbom/sbom.spdx.json
+          syft packages $IMAGE_NAME:$IMAGE_TAG -o cyclonedx-json > sbom/sbom.cdx.json
           cp sbom/sbom.cdx.json sbom/sbom.json
 
       - name: Trivy scan (vulns + licenses)
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${IMAGE_NAME}:${IMAGE_TAG}
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           format: json
           output: trivy.json
           severity: HIGH,CRITICAL
@@ -62,17 +61,13 @@ jobs:
           tar xzf conftest.tar.gz
           sudo mv conftest /usr/local/bin/
 
-      # This will fail the job if Conftest finds CRITICAL vulns per your Rego policies
       - name: Enforce vulnerability policy (block CRITICAL via Rego)
         run: |
-          conftest test trivy.json -p ${OPA_POLICY_DIR} --output json | tee conftest.vuln.json
-          # conftest exits non-zero on violations, so job will fail automatically
+          conftest test trivy.json -p $OPA_POLICY_DIR --output json | tee conftest.vuln.json
 
-      # This will fail the job if disallowed licenses (e.g., GPL/AGPL) are found
       - name: Enforce license policy (disallow GPL via Rego)
         run: |
-          conftest test sbom/sbom.spdx.json -p ${OPA_POLICY_DIR} --output json | tee conftest.license.json
-          # conftest exits non-zero on violations, so job will fail automatically
+          conftest test sbom/sbom.spdx.json -p $OPA_POLICY_DIR --output json | tee conftest.license.json
 
       - name: Upload scan & policy artifacts
         uses: actions/upload-artifact@v4
@@ -93,13 +88,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Each job runs on a fresh VM, so rebuild the image here
       - name: Build Docker image (for DAST)
-        run: docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ./app
+        run: docker build -t $IMAGE_NAME:$IMAGE_TAG ./app
 
       - name: Run container (ephemeral) and wait for readiness
         run: |
-          docker run -d -p 8000:8000 --name app ${IMAGE_NAME}:${IMAGE_TAG}
+          docker run -d -p 8000:8000 --name app $IMAGE_NAME:$IMAGE_TAG
           for i in {1..30}; do
             if curl -sf http://localhost:8000/health > /dev/null; then
               echo "App is ready"; break
@@ -124,6 +118,6 @@ jobs:
       - name: Cleanup container
         if: always()
         run: |
-          docker ps -a
+          docker ps -a || true
           docker logs app || true
           docker rm -f app || true
