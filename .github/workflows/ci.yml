@@ -1,5 +1,14 @@
 name: secure-pipeline
+
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: orion/app
+  IMAGE_TAG: ${{ github.sha }}
+  OPA_POLICY_DIR: ci/opa-policies
 
 jobs:
   static:
@@ -24,21 +33,23 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t orion/app:${{ github.sha }} ./app
+        run: docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ./app
 
       - name: Install Syft
         run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
 
-      - name: Generate SBOM (SPDX & CycloneDX)
+      - name: Generate SBOMs (SPDX & CycloneDX)
         run: |
           mkdir -p sbom
-          syft packages orion/app:${{ github.sha }} -o spdx-json > sbom/sbom.spdx.json
-          syft packages orion/app:${{ github.sha }} -o cyclonedx-json > sbom/sbom.cdx.json
+          syft packages ${IMAGE_NAME}:${IMAGE_TAG} -o spdx-json > sbom/sbom.spdx.json
+          syft packages ${IMAGE_NAME}:${IMAGE_TAG} -o cyclonedx-json > sbom/sbom.cdx.json
+          # convenience single-file alias if you want just "sbom.json"
+          cp sbom/sbom.cdx.json sbom/sbom.json
 
       - name: Trivy scan (vulns + licenses)
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: orion/app:${{ github.sha }}
+          image-ref: ${IMAGE_NAME}:${IMAGE_TAG}
           format: json
           output: trivy.json
           severity: HIGH,CRITICAL
@@ -51,20 +62,30 @@ jobs:
           tar xzf conftest.tar.gz
           sudo mv conftest /usr/local/bin/
 
-      - name: Enforce vulnerability policy (block CRITICAL)
-        run: conftest test trivy.json -p ci/opa-policies
+      # This will fail the job if Conftest finds CRITICAL vulns per your Rego policies
+      - name: Enforce vulnerability policy (block CRITICAL via Rego)
+        run: |
+          conftest test trivy.json -p ${OPA_POLICY_DIR} --output json | tee conftest.vuln.json
+          # conftest exits non-zero on violations, so job will fail automatically
 
-      - name: Enforce license policy (disallow GPL)
-        run: conftest test sbom/sbom.spdx.json -p ci/opa-policies
+      # This will fail the job if disallowed licenses (e.g., GPL/AGPL) are found
+      - name: Enforce license policy (disallow GPL via Rego)
+        run: |
+          conftest test sbom/sbom.spdx.json -p ${OPA_POLICY_DIR} --output json | tee conftest.license.json
+          # conftest exits non-zero on violations, so job will fail automatically
 
-      - name: Upload scan artifacts
+      - name: Upload scan & policy artifacts
         uses: actions/upload-artifact@v4
         with:
           name: scan-artifacts
+          retention-days: 14
           path: |
             sbom/sbom.spdx.json
             sbom/sbom.cdx.json
+            sbom/sbom.json
             trivy.json
+            conftest.vuln.json
+            conftest.license.json
 
   dast:
     runs-on: ubuntu-latest
@@ -74,17 +95,17 @@ jobs:
 
       # Each job runs on a fresh VM, so rebuild the image here
       - name: Build Docker image (for DAST)
-        run: docker build -t orion/app:${{ github.sha }} ./app
+        run: docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ./app
 
       - name: Run container (ephemeral) and wait for readiness
         run: |
-          docker run -d -p 8000:8000 --name app orion/app:${{ github.sha }}
-          for i in {1..20}; do
+          docker run -d -p 8000:8000 --name app ${IMAGE_NAME}:${IMAGE_TAG}
+          for i in {1..30}; do
             if curl -sf http://localhost:8000/health > /dev/null; then
               echo "App is ready"; break
             fi
             echo "Waiting for app... ($i)"
-            sleep 1
+            sleep 2
           done
 
       - name: OWASP ZAP baseline
@@ -97,4 +118,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
+          retention-days: 14
           path: zap-report.html
+
+      - name: Cleanup container
+        if: always()
+        run: |
+          docker ps -a
+          docker logs app || true
+          docker rm -f app || true
